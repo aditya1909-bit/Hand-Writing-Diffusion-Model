@@ -24,10 +24,20 @@ class HandwritingDataset(Dataset):
         self.transform = transforms.Compose([
             transforms.Resize(image_size),
             transforms.ToTensor(),
-            transforms.Normalize([0.5], [0.5]) 
+            transforms.Normalize([0.5, 0.5, 0.5],
+                                 [0.5, 0.5, 0.5])
         ])
 
         self.samples = self._build_index()
+        
+        # Precompute mapping from writer_id to list of sample indices
+        self.writer_to_indices = {}
+        for idx, s in enumerate(self.samples):
+            writer_id = s["writer_id"]
+            if writer_id not in self.writer_to_indices:
+                self.writer_to_indices[writer_id] = []
+            self.writer_to_indices[writer_id].append(idx)
+        
         print(f"Dataset loaded: {len(self.samples)} samples found.")
 
     def _build_index(self):
@@ -101,12 +111,14 @@ class HandwritingDataset(Dataset):
                 target_image = Image.open(item["path"]).convert("RGB")
                 target_image = self.transform(target_image)
                 
-                # Load Style Image (Random image from SAME writer)
-                same_writer_samples = [s for s in self.samples if s["writer_id"] == item["writer_id"]]
-                if len(same_writer_samples) > 1:
-                    style_item = random.choice(same_writer_samples)
+                # Load Style Image (Random image from SAME writer, using precomputed indices)
+                writer_id = item["writer_id"]
+                indices = self.writer_to_indices.get(writer_id, [idx])
+                if len(indices) > 1:
+                    style_idx = random.choice(indices)
+                    style_item = self.samples[style_idx]
                 else:
-                    style_item = item # Fallback if writer has only 1 image
+                    style_item = item  # Fallback if writer has only 1 image
                 
                 style_image = Image.open(style_item["path"]).convert("RGB")
                 style_image = self.transform(style_image)
@@ -127,4 +139,11 @@ class HandwritingDataset(Dataset):
 def get_dataloader(batch_size=8, mock_mode=False):
     tokenizer = BertTokenizer.from_pretrained("bert-base-uncased")
     dataset = HandwritingDataset(root_dir="./iam_data", tokenizer=tokenizer, mock_mode=mock_mode)
-    return DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=8)
+    num_workers = 0 if mock_mode else max(1, (os.cpu_count() or 2) // 2)
+    return DataLoader(
+        dataset,
+        batch_size=batch_size,
+        shuffle=True,
+        num_workers=num_workers,
+        persistent_workers=not mock_mode and num_workers > 0
+    )

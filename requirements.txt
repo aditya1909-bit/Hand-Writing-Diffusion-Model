@@ -13,6 +13,7 @@ accelerate
 pillow
 matplotlib
 numpy
+tqdm
 
 #Jupyter (for running the notebook)
 

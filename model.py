@@ -39,6 +39,7 @@ class HandwritingDiffusionSystem(nn.Module):
         )
         
         self.text_encoder = BertModel.from_pretrained("bert-base-uncased")
+        self.text_encoder.eval()
         self.text_encoder.requires_grad_(False)
         
         self.style_dim = 512
