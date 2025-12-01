@@ -127,4 +127,4 @@ class HandwritingDataset(Dataset):
 def get_dataloader(batch_size=8, mock_mode=False):
     tokenizer = BertTokenizer.from_pretrained("bert-base-uncased")
     dataset = HandwritingDataset(root_dir="./iam_data", tokenizer=tokenizer, mock_mode=mock_mode)
-    return DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=0)
+    return DataLoader(dataset, batch_size=batch_size, shuffle=True, num_workers=8)

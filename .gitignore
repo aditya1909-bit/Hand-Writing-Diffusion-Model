@@ -1,0 +1,41 @@
+#Python Basics
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+#Virtual Environments
+
+.venv/
+venv/
+env/
+.env
+
+#Mac OS Junk
+
+.DS_Store
+
+#Do not upload the dataset
+
+iam_data/
+iam-handwriting-word-database.zip
+
+saved_models/
+*.pth
+*.ckpt
+*.safetensors
+
+#Hugging Face Cache
+
+models/
+tokenizers/
+
+
+#Ignore notebook checkpoint backups
+
+.ipynb_checkpoints/
+
+#IDE Settings
+
+.vscode/
+.idea/
