@@ -3,21 +3,20 @@ import os
 from tqdm import tqdm
 from data_loader import get_dataloader
 from model import HandwritingDiffusionSystem
+from torch.amp import autocast, GradScaler
+
+SAVE_DIR = "./saved_models"
 
 def get_device():
-    if torch.cuda.is_available():
-        return "cuda"
-    elif torch.backends.mps.is_available():
-        return "mps"
-    else:
-        return "cpu"
+    if torch.cuda.is_available(): return "cuda"
+    elif torch.backends.mps.is_available(): return "mps"
+    else: return "cpu"
 
-# Configuration
 CONFIG = {
-    "epochs": 5, 
-    "batch_size": 12,
+    "epochs": 250,
+    "batch_size": 32,
     "lr": 1e-4,
-    "save_dir": "./saved_models",
+    "save_dir": SAVE_DIR,
     "device": get_device()
 }
 
@@ -25,23 +24,31 @@ def train():
     os.makedirs(CONFIG["save_dir"], exist_ok=True)
     print(f"--- Training Configuration ---")
     print(f"Device: {CONFIG['device'].upper()}")
-    if CONFIG['device'] == 'mps':
-        print("Apple Metal acceleration enabled.")
+    print(f"Saving to: {CONFIG['save_dir']}")
+    amp_enabled = (CONFIG["device"] == "cuda" and torch.cuda.is_available())
+    print(f"Mixed Precision (FP16): {'ENABLED' if amp_enabled else 'DISABLED'}")
     
     # 1. Initialize
     model_system = HandwritingDiffusionSystem(device=CONFIG["device"]).to(CONFIG["device"])
+
+    # Multi-GPU Support (DataParallel)
+    if CONFIG["device"] == "cuda" and torch.cuda.device_count() > 1:
+        print(f"Using {torch.cuda.device_count()} GPUs with DataParallel.")
+        model_system = torch.nn.DataParallel(model_system)
     
+    # Load Data
     dataloader = get_dataloader(batch_size=CONFIG["batch_size"], mock_mode=False)
     
-    if len(dataloader) == 0:
-        print("No samples found in dataset. Check your IAM root_dir and words.txt path in Data_Loader.py.")
-        return
-    
-    # 2. Optimizer
+    # 2. Optimizer & Scaler
+    base_model = model_system.module if isinstance(model_system, torch.nn.DataParallel) else model_system
+
     optimizer = torch.optim.AdamW(
-        list(model_system.unet.parameters()) + list(model_system.style_encoder.parameters()),
+        list(base_model.unet.parameters()) + list(base_model.style_encoder.parameters()),
         lr=CONFIG["lr"]
     )
+    
+    # The Scaler handles the 16-bit math stability when using CUDA
+    scaler = GradScaler(enabled=amp_enabled)
     
     # 3. Loop
     for epoch in range(CONFIG["epochs"]):
@@ -52,22 +59,34 @@ def train():
         for step, batch in enumerate(progress_bar):
             optimizer.zero_grad()
             
-            loss = model_system(batch)
-            loss.backward()
-            optimizer.step()
+            if amp_enabled:
+                # Run forward in mixed precision on CUDA
+                with autocast(device_type="cuda"):
+                    loss = model_system(batch)
+                if isinstance(loss, torch.Tensor) and loss.dim() > 0:
+                    loss = loss.mean()
+                scaler.scale(loss).backward()
+                scaler.step(optimizer)
+                scaler.update()
+            else:
+                # Fallback: standard 32-bit training
+                loss = model_system(batch)
+                if isinstance(loss, torch.Tensor) and loss.dim() > 0:
+                    loss = loss.mean()
+                loss.backward()
+                optimizer.step()
             
             epoch_loss += loss.item()
-
-            # update tqdm bar with current loss
             progress_bar.set_postfix({"loss": f"{loss.item():.4f}"})
         
         avg_loss = epoch_loss / len(dataloader)
         print(f"--- Epoch {epoch} Finished. Avg Loss: {avg_loss:.4f} ---")
         
-        # Save Checkpoint
-        save_path = f"{CONFIG['save_dir']}/model_epoch_{epoch}.pth"
-        torch.save(model_system.state_dict(), save_path)
-        print(f"Model saved to {save_path}")
+        # Save only every 5 epochs to reduce file count
+        if (epoch + 1) % 5 == 0:
+            save_path = f"{CONFIG['save_dir']}/model_epoch_{epoch+1}.pth"
+            torch.save(model_system.state_dict(), save_path)
+            print(f"Saved checkpoint: {save_path}")
 
 if __name__ == "__main__":
     train()

@@ -7,77 +7,87 @@ import os
 import random
 
 class HandwritingDataset(Dataset):
-    def __init__(self, root_dir, tokenizer, image_size=(64, 256), mock_mode=False):
-        """
-        Args:
-            root_dir: Path to the unzipped IAM dataset (e.g., "./iam_data")
-            tokenizer: BERT tokenizer.
-            image_size: Target (H, W).
-            mock_mode: Set to True to test without data.
-        """
+    def __init__(self, root_dir, tokenizer, image_size=(64, 256), mock_mode=False, num_writers=None):
         self.root_dir = root_dir
         self.tokenizer = tokenizer
         self.image_size = image_size
         self.mock_mode = mock_mode
+        self.num_writers = num_writers
         
-        # Transforms: Resize and Normalize to [-1, 1]
         self.transform = transforms.Compose([
             transforms.Resize(image_size),
             transforms.ToTensor(),
             transforms.Normalize([0.5, 0.5, 0.5],
-                                 [0.5, 0.5, 0.5])
+                                [0.5, 0.5, 0.5])
         ])
 
         self.samples = self._build_index()
-        
-        # Precompute mapping from writer_id to list of sample indices
+        print(f"Dataset loaded: {len(self.samples)} samples found.")
+        if num_writers:
+            print(f"--- FILTER ACTIVE: Training on the first {num_writers} writers ---")
+
+        # Precompute mapping from writer_id to list of indices for fast style sampling
         self.writer_to_indices = {}
         for idx, s in enumerate(self.samples):
-            writer_id = s["writer_id"]
-            if writer_id not in self.writer_to_indices:
-                self.writer_to_indices[writer_id] = []
-            self.writer_to_indices[writer_id].append(idx)
-        
-        print(f"Dataset loaded: {len(self.samples)} samples found.")
+            wid = s["writer_id"]
+            if wid not in self.writer_to_indices:
+                self.writer_to_indices[wid] = []
+            self.writer_to_indices[wid].append(idx)
 
     def _build_index(self):
         if self.mock_mode:
-            return [
-                {"text": "mock text", "writer_id": "001", "path": "mock.png"}
-            ] * 100
+            return [{"text": "mock", "writer_id": "001", "path": "mock.png"}] * 100
 
         samples = []
-        
         words_file = os.path.join(self.root_dir, "words.txt")
         
         if not os.path.exists(words_file):
-            print(f"Warning: {words_file} not found. Check your extracted folder structure.")
+            print(f"Warning: {words_file} not found.")
             return []
 
         with open(words_file, "r") as f:
             lines = f.readlines()
 
-        # Parse IAM format
+        # 1. First pass: Identify the top N writers
+        allowed_writers = set()
+        if self.num_writers:
+            seen_writers = []
+            for line in lines:
+                if line.startswith("#") or line.strip() == "": continue
+                parts = line.strip().split()
+                if len(parts) < 9: continue
+                
+                # FIX: Extract writer ID from the file ID (first column)
+                file_id = parts[0]
+                w_id = file_id.split("-")[0] 
+                
+                if w_id not in seen_writers:
+                    seen_writers.append(w_id)
+                    if len(seen_writers) >= self.num_writers:
+                        break
+            allowed_writers = set(seen_writers)
+            print(f"Selected writers: {sorted(list(allowed_writers))}")
+
+        # 2. Second pass: Collect samples
         for line in lines:
-            if line.startswith("#") or line.strip() == "":
-                continue
+            if line.startswith("#") or line.strip() == "": continue
             
             parts = line.strip().split()
-            if len(parts) < 9:
-                continue
+            if len(parts) < 9: continue
 
-            # IAM parsing logic
             file_id = parts[0]
-            writer_id = parts[1]
+
+            writer_id = file_id.split("-")[0]
+            
             transcription = parts[-1] 
             
-            # Construct image path based on ID structure
+            if self.num_writers and writer_id not in allowed_writers:
+                continue
+            
             folder_1 = file_id.split("-")[0]
             folder_2 = f"{folder_1}-{file_id.split('-')[1]}"
-            
             img_path = os.path.join(self.root_dir, "words", folder_1, folder_2, f"{file_id}.png")
             
-            # Only add if file actually exists
             if os.path.exists(img_path):
                 samples.append({
                     "text": transcription,
@@ -93,7 +103,6 @@ class HandwritingDataset(Dataset):
     def __getitem__(self, idx):
         item = self.samples[idx]
         
-        # 1. Text Tokenization
         text_tokens = self.tokenizer(
             item["text"], 
             padding="max_length", 
@@ -107,25 +116,23 @@ class HandwritingDataset(Dataset):
             style_image = torch.randn(3, self.image_size[0], self.image_size[1])
         else:
             try:
-                # Load Target Image
                 target_image = Image.open(item["path"]).convert("RGB")
                 target_image = self.transform(target_image)
-                
-                # Load Style Image (Random image from SAME writer, using precomputed indices)
+
+                # Use precomputed indices for this writer to avoid O(N) scans each time
                 writer_id = item["writer_id"]
-                indices = self.writer_to_indices.get(writer_id, [idx])
-                if len(indices) > 1:
-                    style_idx = random.choice(indices)
+                candidate_indices = self.writer_to_indices.get(writer_id, [idx])
+                if len(candidate_indices) > 1:
+                    style_idx = random.choice(candidate_indices)
                     style_item = self.samples[style_idx]
                 else:
-                    style_item = item  # Fallback if writer has only 1 image
+                    style_item = item
                 
                 style_image = Image.open(style_item["path"]).convert("RGB")
                 style_image = self.transform(style_image)
                 
             except Exception as e:
                 print(f"Error loading {item['path']}: {e}")
-                # Fallback to noise in case of corrupt image
                 target_image = torch.randn(3, self.image_size[0], self.image_size[1])
                 style_image = torch.randn(3, self.image_size[0], self.image_size[1])
 
@@ -138,12 +145,23 @@ class HandwritingDataset(Dataset):
 
 def get_dataloader(batch_size=8, mock_mode=False):
     tokenizer = BertTokenizer.from_pretrained("bert-base-uncased")
-    dataset = HandwritingDataset(root_dir="./iam_data", tokenizer=tokenizer, mock_mode=mock_mode)
-    num_workers = 0 if mock_mode else max(1, (os.cpu_count() or 2) // 2)
+
+    NUM_WRITERS = 10
+
+    dataset = HandwritingDataset(
+        root_dir="./iam_data",
+        tokenizer=tokenizer,
+        mock_mode=mock_mode,
+        num_writers=NUM_WRITERS,
+    )
+
+    # Use more workers when not in mock mode; fall back to 0 on platforms that don't like multiprocessing
+    num_workers = 0 if mock_mode else max(2, (os.cpu_count() or 4) // 2)
+
     return DataLoader(
         dataset,
         batch_size=batch_size,
         shuffle=True,
         num_workers=num_workers,
-        persistent_workers=not mock_mode and num_workers > 0
+        pin_memory=torch.cuda.is_available(),
     )
