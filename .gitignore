@@ -25,6 +25,7 @@ saved_models/
 *.ckpt
 *.safetensors
 
+generated_outputs/
 #Hugging Face Cache
 
 models/
