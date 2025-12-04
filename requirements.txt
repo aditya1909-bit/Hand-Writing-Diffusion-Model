@@ -3,20 +3,17 @@ torch
 torchvision
 
 #Hugging Face ecosystem
-
 transformers
 diffusers
 accelerate
 
 #Image processing and Visualization
-
 pillow
 matplotlib
 numpy
 tqdm
 
 #Jupyter (for running the notebook)
-
 jupyter
 ipykernel
 
