@@ -18,14 +18,14 @@ env/
 #Do not upload the dataset
 
 iam_data/
-iam-handwriting-word-database.zip
 
 saved_models/
 *.pth
 *.ckpt
 *.safetensors
 
-generated_outputs/
+# generated_outputs/
+
 #Hugging Face Cache
 
 models/
