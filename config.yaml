@@ -1,0 +1,82 @@
+data:
+  root_dir: ./iam_data
+  words_file: words.txt
+  words_dir: words
+  image_size: [64, 256]
+  max_length: 32
+  num_writers: null
+  mock_mode: false
+  pad_value: 255
+  skip_err: true
+  seed: 1337
+
+model:
+  text_encoder: bert-base-uncased
+  style_dim: 512
+  latent:
+    enabled: true
+    latent_channels: 4
+    downsample_factor: 4
+  scheduler:
+    num_train_timesteps: 1000
+    beta_start: 0.0001
+    beta_end: 0.02
+    beta_schedule: linear
+
+train:
+  epochs: 250
+  batch_size: 32
+  lr: 0.0001
+  weight_decay: 0.01
+  betas: [0.9, 0.999]
+  lr_scheduler: cosine
+  warmup_ratio: 0.05
+  warmup_steps: 0
+  max_grad_norm: 1.0
+  text_drop_prob: 0.1
+  style_drop_prob: 0.1
+  cond_drop_prob: 0.05
+  style_cls_weight: 0.1
+  style_contrastive_weight: 0.1
+  style_contrastive_temperature: 0.07
+  autoencoder_recon_weight: 1.0
+  save_dir: ./saved_models
+  save_every: 5
+  resume: true
+  num_workers: 4
+  prefetch_factor: 4
+  grad_accum_steps: 1
+  amp: true
+  tf32: true
+  cudnn_benchmark: true
+  channels_last: true
+  gradient_checkpointing: false
+  compile: false
+  compile_mode: max-autotune
+  ema: true
+  ema_decay: 0.9999
+  min_snr_gamma: 5.0
+  val_split: 0.05
+  val_split_by_writer: false
+  val_batch_size: 16
+  val_every: 1
+  val_max_batches: 20
+  eval_steps: 30
+  eval_guidance_scale: 3.0
+  log_dir: ./logs
+  log_images_every: 5
+  log_images: 8
+  clip_metric: true
+  clip_model: openai/clip-vit-base-patch32
+  clip_every: 5
+  eval_use_ema: true
+  device: auto
+  log_every: 25
+
+generate:
+  output_dir: ./generated_outputs
+  num_steps: 50
+  scheduler: ddpm
+  use_ema: true
+  guidance_scale: 3.0
+  style_mix: 0.5

@@ -1,43 +1,63 @@
+import argparse
+
 import torch
-from data_loader import HandwritingDataset
-from transformers import BertTokenizer
 import matplotlib.pyplot as plt
-from torchvision import transforms
+
+from config_utils import load_config
+from data_loader import HandwritingDataset
+
+
+def parse_args():
+    parser = argparse.ArgumentParser(description="Inspect a few dataset samples.")
+    parser.add_argument("--config", default="config.yaml", help="Path to YAML config.")
+    parser.add_argument("--num-samples", type=int, default=5, help="Number of samples to visualize.")
+    parser.add_argument("--output", default="data_inspection.png", help="Output image path.")
+    parser.add_argument("--mock", action="store_true", help="Enable mock mode for quick tests.")
+    return parser.parse_args()
+
 
 def inspect():
+    args = parse_args()
+    config = load_config(args.config)
+    if args.mock:
+        config["data"]["mock_mode"] = True
+
     print("Loading dataset (this may take a moment)...")
-    tokenizer = BertTokenizer.from_pretrained("bert-base-uncased")
-    
-    dataset = HandwritingDataset(root_dir="./iam_data", tokenizer=tokenizer, mock_mode=False)
-    
-    print(f"Found {len(dataset)} samples.")
-    
-    # 1. Grab 5 random samples
-    indices = torch.randperm(len(dataset))[:5]
-    
-    fig, axes = plt.subplots(5, 1, figsize=(10, 8))
-    
-    for i, idx in enumerate(indices):
-        idx = idx.item()
-        item = dataset[idx]
-        
-        # Un-normalize from [-1, 1] back to [0, 1] for viewing
+    dataset = HandwritingDataset(
+        root_dir=config["data"]["root_dir"],
+        image_size=config["data"]["image_size"],
+        max_length=config["data"]["max_length"],
+        mock_mode=config["data"]["mock_mode"],
+        num_writers=config["data"]["num_writers"],
+        words_file=config["data"]["words_file"],
+        words_dir=config["data"]["words_dir"],
+        pad_value=config["data"]["pad_value"],
+        skip_err=config["data"]["skip_err"],
+    )
+
+    if len(dataset) == 0:
+        raise RuntimeError("Dataset is empty. Check your data path and filters.")
+
+    count = min(args.num_samples, len(dataset))
+    indices = torch.randperm(len(dataset))[:count]
+
+    fig, axes = plt.subplots(count, 1, figsize=(10, 2 * count))
+    if count == 1:
+        axes = [axes]
+
+    for axis, idx in zip(axes, indices):
+        item = dataset[idx.item()]
         img_tensor = item["pixel_values"]
         img_display = (img_tensor / 2 + 0.5).clamp(0, 1)
         img_display = img_display.permute(1, 2, 0).numpy()
-        
-        # Decode the text (BERT tokens -> String)
-        text_ids = item["input_ids"]
-        decoded_text = tokenizer.decode(text_ids, skip_special_tokens=True)
-        
-        ax = axes[i]
-        ax.imshow(img_display)
-        ax.set_title(f"Label: '{decoded_text}'")
-        ax.axis("off")
-        
+        axis.imshow(img_display)
+        axis.set_title(f"Label: '{item['text']}'")
+        axis.axis("off")
+
     plt.tight_layout()
-    plt.savefig("data_inspection.png")
-    print("Saved inspection to 'data_inspection.png'. Open it to check quality!")
+    plt.savefig(args.output)
+    print(f"Saved inspection to '{args.output}'.")
+
 
 if __name__ == "__main__":
     inspect()

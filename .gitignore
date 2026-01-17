@@ -24,7 +24,15 @@ saved_models/
 *.ckpt
 *.safetensors
 
-# generated_outputs/
+generated_outputs/
+
+# Training logs
+runs/
+wandb/
+logs/
+
+# Local artifacts
+data_inspection.png
 
 #Hugging Face Cache
 

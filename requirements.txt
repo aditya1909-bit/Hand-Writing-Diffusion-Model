@@ -1,21 +1,23 @@
-#Core Pytorch ecosystem
-torch
-torchvision
+torch==2.9.1
+torchvision==0.24.1
 
-#Hugging Face ecosystem
-transformers
-diffusers
-accelerate
+transformers==4.46.3; python_version >= "3.13"
+transformers==4.46.3; python_version < "3.13"
+diffusers==0.29.2
+accelerate==0.34.2
+peft==0.11.1
 
-#Image processing and Visualization
-pillow
-matplotlib
-numpy
-tqdm
+pillow==11.0.0; python_version >= "3.13"
+pillow==10.3.0; python_version < "3.13"
 
-#Jupyter (for running the notebook)
-jupyter
-ipykernel
+numpy==2.1.0; python_version >= "3.13"
+numpy==1.26.4; python_version < "3.13"
 
-#Dataset
-kaggle
+matplotlib==3.9.2; python_version >= "3.13"
+matplotlib==3.8.4; python_version < "3.13"
+
+tokenizers==0.20.1; python_version >= "3.13"
+
+tqdm==4.66.4
+pyyaml==6.0.1
+tensorboard==2.17.0
