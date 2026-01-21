@@ -41,6 +41,7 @@ def _parse_words_line(line, root_dir, words_dir, skip_err):
         "text": transcription,
         "writer_id": writer_id,
         "path": img_path,
+        "file_id": file_id,
     }
 
 
@@ -54,6 +55,9 @@ class HandwritingDataset(Dataset):
         num_writers=None,
         words_file="words.txt",
         words_dir="words",
+        cache_dir=None,
+        cache_tokens=False,
+        cache_images=False,
         pad_value=255,
         skip_err=True,
         samples=None,
@@ -66,8 +70,13 @@ class HandwritingDataset(Dataset):
         self.num_writers = num_writers
         self.words_file = words_file
         self.words_dir = words_dir
+        self.cache_dir = cache_dir
+        self.cache_tokens = cache_tokens
+        self.cache_images = cache_images
         self.pad_value = pad_value
         self.skip_err = skip_err
+        self._warned_cache_load = False
+        self.token_cache = None
 
         self.to_tensor = transforms.Compose(
             [
@@ -75,6 +84,17 @@ class HandwritingDataset(Dataset):
                 transforms.Normalize([0.5, 0.5, 0.5], [0.5, 0.5, 0.5]),
             ]
         )
+
+        if self.cache_tokens and self.cache_dir:
+            tokens_path = os.path.join(self.cache_dir, "tokens.pt")
+            if os.path.exists(tokens_path):
+                try:
+                    self.token_cache = torch.load(tokens_path, map_location="cpu")
+                except Exception as exc:
+                    print(f"Warning: failed to load token cache at {tokens_path}: {exc}")
+                    self.token_cache = None
+            else:
+                print(f"Warning: token cache not found at {tokens_path}")
 
         if samples is None:
             self.samples = self._build_index()
@@ -97,7 +117,7 @@ class HandwritingDataset(Dataset):
 
     def _build_index(self):
         if self.mock_mode:
-            return [{"text": "mock text", "writer_id": "000", "path": None}] * 100
+            return [{"text": "mock text", "writer_id": "000", "path": None, "file_id": None}] * 100
 
         words_path = os.path.join(self.root_dir, self.words_file)
         if not os.path.exists(words_path):
@@ -138,7 +158,16 @@ class HandwritingDataset(Dataset):
     def __len__(self):
         return len(self.samples)
 
-    def _load_image(self, path):
+    def _load_image(self, path, file_id=None):
+        if self.cache_dir and self.cache_images and file_id:
+            cache_path = os.path.join(self.cache_dir, "images", f"{file_id}.pt")
+            if os.path.exists(cache_path):
+                try:
+                    return torch.load(cache_path, map_location="cpu")
+                except Exception as exc:
+                    if not self._warned_cache_load:
+                        print(f"Warning: failed to load cached image {cache_path}: {exc}")
+                        self._warned_cache_load = True
         image = Image.open(path).convert("RGB")
         image = resize_with_pad(image, self.image_size, fill=self.pad_value)
         return self.to_tensor(image)
@@ -146,6 +175,7 @@ class HandwritingDataset(Dataset):
     def __getitem__(self, idx):
         item = self.samples[idx]
         writer_label = self.writer_id_to_index.get(item["writer_id"], -1)
+        file_id = item.get("file_id")
 
         if self.mock_mode or item["path"] is None:
             height, width = self.image_size
@@ -157,10 +187,11 @@ class HandwritingDataset(Dataset):
                 "text": item["text"],
                 "writer_id": item["writer_id"],
                 "writer_label": writer_label,
+                "file_id": file_id,
             }
 
         try:
-            target_image = self._load_image(item["path"])
+            target_image = self._load_image(item["path"], file_id=file_id)
 
             writer_id = item["writer_id"]
             candidate_indices = self.writer_to_indices.get(writer_id, [idx])
@@ -171,20 +202,34 @@ class HandwritingDataset(Dataset):
             else:
                 style_item = item
 
-            style_image = self._load_image(style_item["path"])
+            style_image = self._load_image(style_item["path"], file_id=style_item.get("file_id"))
         except Exception as exc:
             print(f"Error loading {item['path']}: {exc}")
             height, width = self.image_size
             target_image = torch.randn(3, height, width)
             style_image = torch.randn(3, height, width)
 
-        return {
+        sample = {
             "pixel_values": target_image,
             "style_pixel_values": style_image,
             "text": item["text"],
             "writer_id": item["writer_id"],
             "writer_label": writer_label,
+            "file_id": file_id,
         }
+        if self.token_cache and file_id:
+            cached = self.token_cache.get(file_id)
+            if cached:
+                input_ids = cached.get("input_ids")
+                attention_mask = cached.get("attention_mask")
+                if input_ids is not None and attention_mask is not None:
+                    if not torch.is_tensor(input_ids):
+                        input_ids = torch.tensor(input_ids, dtype=torch.long)
+                    if not torch.is_tensor(attention_mask):
+                        attention_mask = torch.tensor(attention_mask, dtype=torch.long)
+                    sample["input_ids"] = input_ids
+                    sample["attention_mask"] = attention_mask
+        return sample
 
 
 class HandwritingCollator:
@@ -194,25 +239,33 @@ class HandwritingCollator:
 
     def __call__(self, batch):
         texts = [item["text"] for item in batch]
-        tokenized = self.tokenizer(
-            texts,
-            padding="max_length",
-            max_length=self.max_length,
-            truncation=True,
-            return_tensors="pt",
-        )
+        if all("input_ids" in item and "attention_mask" in item for item in batch):
+            input_ids = torch.stack([item["input_ids"] for item in batch])
+            attention_mask = torch.stack([item["attention_mask"] for item in batch])
+        else:
+            tokenized = self.tokenizer(
+                texts,
+                padding="max_length",
+                max_length=self.max_length,
+                truncation=True,
+                return_tensors="pt",
+            )
+            input_ids = tokenized.input_ids
+            attention_mask = tokenized.attention_mask
 
         pixel_values = torch.stack([item["pixel_values"] for item in batch])
         style_pixel_values = torch.stack([item["style_pixel_values"] for item in batch])
         writer_labels = torch.tensor([item["writer_label"] for item in batch], dtype=torch.long)
+        file_ids = [item.get("file_id") for item in batch]
 
         return {
             "pixel_values": pixel_values,
             "style_pixel_values": style_pixel_values,
-            "input_ids": tokenized.input_ids,
-            "attention_mask": tokenized.attention_mask,
+            "input_ids": input_ids,
+            "attention_mask": attention_mask,
             "text": texts,
             "writer_labels": writer_labels,
+            "file_ids": file_ids,
         }
 
 
@@ -253,6 +306,9 @@ def get_dataloaders(config):
     data_cfg = config["data"]
     train_cfg = config.get("train", {})
     model_cfg = config["model"]
+    cache_dir = data_cfg.get("cache_dir")
+    cache_tokens = bool(data_cfg.get("cache_tokens", False))
+    cache_images = bool(data_cfg.get("cache_images", False))
 
     tokenizer = BertTokenizerFast.from_pretrained(model_cfg["text_encoder"])
 
@@ -264,6 +320,9 @@ def get_dataloaders(config):
         num_writers=data_cfg["num_writers"],
         words_file=data_cfg["words_file"],
         words_dir=data_cfg["words_dir"],
+        cache_dir=cache_dir,
+        cache_tokens=cache_tokens,
+        cache_images=cache_images,
         pad_value=data_cfg["pad_value"],
         skip_err=data_cfg["skip_err"],
     )
@@ -286,6 +345,9 @@ def get_dataloaders(config):
         num_writers=None,
         words_file=data_cfg["words_file"],
         words_dir=data_cfg["words_dir"],
+        cache_dir=cache_dir,
+        cache_tokens=cache_tokens,
+        cache_images=cache_images,
         pad_value=data_cfg["pad_value"],
         skip_err=data_cfg["skip_err"],
         samples=train_samples,
@@ -302,6 +364,9 @@ def get_dataloaders(config):
             num_writers=None,
             words_file=data_cfg["words_file"],
             words_dir=data_cfg["words_dir"],
+            cache_dir=cache_dir,
+            cache_tokens=cache_tokens,
+            cache_images=cache_images,
             pad_value=data_cfg["pad_value"],
             skip_err=data_cfg["skip_err"],
             samples=val_samples,
@@ -347,6 +412,9 @@ def get_dataloader(config, batch_size=None, shuffle=True):
     data_cfg = config["data"]
     model_cfg = config["model"]
     train_cfg = config.get("train", {})
+    cache_dir = data_cfg.get("cache_dir")
+    cache_tokens = bool(data_cfg.get("cache_tokens", False))
+    cache_images = bool(data_cfg.get("cache_images", False))
 
     tokenizer = BertTokenizerFast.from_pretrained(model_cfg["text_encoder"])
 
@@ -358,6 +426,9 @@ def get_dataloader(config, batch_size=None, shuffle=True):
         num_writers=data_cfg["num_writers"],
         words_file=data_cfg["words_file"],
         words_dir=data_cfg["words_dir"],
+        cache_dir=cache_dir,
+        cache_tokens=cache_tokens,
+        cache_images=cache_images,
         pad_value=data_cfg["pad_value"],
         skip_err=data_cfg["skip_err"],
     )

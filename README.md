@@ -1,6 +1,6 @@
 # Conditional Handwriting Diffusion Model
 
-This project implements a conditional diffusion model that generates handwriting images from text prompts while conditioning on a reference handwriting style image. It uses Hugging Face `diffusers` for the UNet backbone and `transformers` for the text encoder.
+This project implements a conditional diffusion model that generates handwriting images from text prompts while conditioning on a reference handwriting style image. It uses a frozen BERT text encoder, a CNN style encoder, and a DDPM-based UNet backbone via Hugging Face `diffusers`.
 
 ## Setup
 
@@ -38,9 +38,9 @@ The data loader skips lines marked `err` and replaces `|` with spaces in transcr
 Defaults live in `config.yaml`. You can edit the YAML directly or override from the CLI.
 
 Key sections:
-- `data`: dataset root, image size, max token length, writer filtering
-- `model`: text encoder name, style embedding size, scheduler settings
-- `train`: batch size, epochs, checkpoint frequency, device selection
+- `data`: dataset root, image size, max token length, writer filtering, cache paths
+- `model`: text encoder name, style embedding size, scheduler settings (including custom noise schedules)
+- `train`: batch size, epochs, checkpoint frequency, device selection, mixed precision
 - `generate`: output directory and sampler choice
 
 ## Usage
@@ -87,10 +87,59 @@ View training metrics (TensorBoard):
 tensorboard --logdir ./logs
 ```
 
+## Benchmarking
+
+Precompute caches (token + image tensors):
+
+```bash
+python scripts/preprocess_iam.py --cache-images --cache-tokens
+```
+
+Dataset stats:
+
+```bash
+python scripts/dataset_stats.py
+```
+
+Training throughput:
+
+```bash
+python scripts/benchmark_train.py
+```
+
+Inference throughput:
+
+```bash
+python scripts/benchmark_infer.py --checkpoint /path/to/checkpoint.pth
+```
+
+FID evaluation:
+
+```bash
+python scripts/eval_fid.py --checkpoint /path/to/checkpoint.pth
+```
+
+Update the benchmark summary in this README:
+
+```bash
+python scripts/report_benchmarks.py --write-readme
+```
+
+## Benchmarks
+
+<!-- BENCHMARKS:START -->
+- Dataset: not recorded
+- FID (IAM): not recorded
+- Train throughput: not recorded
+- Inference throughput: not recorded
+<!-- BENCHMARKS:END -->
+
 ## Notes
 
 - The training checkpoint format now stores optimizer and scaler state for reliable resume.
-- Training supports cosine schedules, EMA weights, CFG dropout, gradient clipping, and optional min-SNR loss reweighting via `config.yaml`.
+- Training supports EMA weights, CFG dropout, gradient clipping, optional min-SNR loss reweighting, and custom noise schedules via `config.yaml`.
+- Set `model.scheduler.custom_beta_schedule` to `linear`, `quadratic`, `sigmoid`, or `cosine` to enable custom schedules.
+- Data preprocessing can cache tokenized text and resized image tensors for faster IO-bound runs.
 - Style conditioning can be strengthened via writer-ID classification and supervised contrastive loss (weights configurable in `config.yaml`).
 - Validation logging includes loss curves, sample grids, and CLIP text-image similarity when enabled.
 - Generated samples are saved to `generated_outputs/` by default.

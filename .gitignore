@@ -26,6 +26,9 @@ saved_models/
 
 generated_outputs/
 
+# Preprocessing cache
+cache/
+
 # Training logs
 runs/
 wandb/

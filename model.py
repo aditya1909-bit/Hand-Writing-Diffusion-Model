@@ -1,12 +1,13 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from diffusers import UNet2DConditionModel, DDPMScheduler
+from diffusers import UNet2DConditionModel
 from diffusers.models.attention_processor import AttnProcessor
 from transformers import BertModel
 
 from autoencoder import SimpleAutoencoder
 from losses import supervised_contrastive_loss
+from scheduler_utils import build_scheduler
 
 class StyleEncoder(nn.Module):
     def __init__(self, output_dim=512):
@@ -72,7 +73,7 @@ class HandwritingDiffusionSystem(nn.Module):
                 "beta_end": 0.02,
                 "beta_schedule": "linear",
             }
-        self.scheduler = DDPMScheduler(**scheduler_config)
+        self.scheduler = build_scheduler(scheduler_config)
         
         self.text_encoder = BertModel.from_pretrained(text_encoder_name)
         self.text_encoder.eval()
