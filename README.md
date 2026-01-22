@@ -127,12 +127,10 @@ python scripts/report_benchmarks.py --write-readme
 
 ## Benchmarks
 
-<!-- BENCHMARKS:START -->
-- Dataset: not recorded
-- FID (IAM): not recorded
-- Train throughput: not recorded
-- Inference throughput: not recorded
-<!-- BENCHMARKS:END -->
+- Dataset: 
+- FID (IAM): 
+- Train throughput: 
+- Inference throughput: 
 
 ## Notes
 
